@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>__TITLE__侦察地图</title>
+<style>
+ body{margin:0;background:#0f1220;color:#e8eaf0;font-family:system-ui,'Microsoft YaHei',sans-serif;}
+ .wrap{max-width:1400px;margin:0 auto;padding:20px;box-sizing:border-box;}
+ h1{font-size:20px;margin:0 0 4px;}
+ .url{font-size:12px;color:#7c87a0;word-break:break-all;margin-bottom:14px;}
+ .stats{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;}
+ .stat{background:#182036;border:1px solid #2a3550;border-radius:10px;padding:10px 14px;font-size:13px;}
+ .stat b{font-size:18px;display:block;}
+ .panel{background:#12162a;border:1px solid #2a3550;border-radius:12px;padding:14px;margin-bottom:14px;}
+ .panel h2{font-size:15px;margin:0 0 10px;color:#8fb8ff;}
+ svg{width:100%;height:auto;background:#0a0d18;border:1px solid #2a3550;border-radius:8px;}
+ #detail{position:fixed;right:16px;top:16px;width:320px;max-height:80vh;overflow:auto;background:#1a2238;border:1px solid #4d9fff;border-radius:12px;padding:14px;display:none;font-size:13px;z-index:99;box-shadow:0 8px 30px #000a;}
+ #detail b{color:#4d9fff;}
+ table{width:100%;border-collapse:collapse;font-size:12.5px;}
+ th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #1c2440;white-space:nowrap;}
+ th{position:sticky;top:0;background:#182036;color:#9aa3b5;}
+ tr:hover{background:#182036;}
+ input#q{width:100%;box-sizing:border-box;padding:8px 12px;background:#0a0d18;border:1px solid #2a3550;border-radius:8px;color:#e8eaf0;font-size:14px;margin-bottom:10px;}
+ .legend span{display:inline-block;margin-right:14px;font-size:12px;color:#9aa3b5;}
+ .dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px;}
+ .chip{display:inline-block;border-radius:4px;padding:1px 6px;font-size:12px;}
+</style></head>
+<body><div class="wrap">
+<h1>🔍 页面侦察地图</h1>
+<div class="url">__URL__</div>
+<div class="stats">__STATS__</div>
+<div class="panel">
+<h2>首屏元素布局图（点击色块看详情；虚线=影子DOM里）</h2>
+<svg viewBox="0 0 __SVG_W__ __SVG_H__" xmlns="http://www.w3.org/2000/svg">__SVG__</svg>
+<div style="margin-top:8px;" class="legend">
+  <span><span class="dot" style="background:#4d9fff"></span>按钮</span>
+  <span><span class="dot" style="background:#37c46f"></span>输入框</span>
+  <span><span class="dot" style="background:#ffd479"></span>链接</span>
+  <span><span class="dot" style="background:#c86bff"></span>文件上传口</span>
+  <span><span class="dot" style="background:#ff8f6b"></span>控件</span>
+  <span style="color:#ff6b6b">⚠ 虚线框 = 藏在 Shadow DOM 里（普通方式点不到，需穿透）</span>
+</div>
+</div>
+<div class="panel">
+<h2>全部可交互元素清单（点行看详情）</h2>
+<input id="q" placeholder="搜索: 输入文字/坐标/class...">
+<div style="overflow:auto;max-height:520px;">
+<table><thead><tr><th>类型</th><th>标签</th><th>文本</th><th>placeholder</th><th>type</th><th>role</th><th>坐标</th><th>尺寸</th><th>可用</th><th>影子DOM</th><th>class</th></tr></thead>
+<tbody>__ROWS__</tbody></table>
+</div>
+</div>
+<div id="detail"></div>
+<script>
+var E=__DATA__;
+var D=document.getElementById('detail');
+function show(i){var e=E[i];D.innerHTML='<div style="font-size:15px;font-weight:700;margin-bottom:8px;">'+e.kind+'</div>'+
+ '<b>文本:</b> '+(e.text||'-')+'<br><b>placeholder:</b> '+(e.ph||'-')+'<br><b>type:</b> '+(e.type||'-')+
+ '<br><b>role:</b> '+(e.role||'-')+'<br><b>坐标:</b> '+e.x+','+e.y+'（CSS像素）<br><b>尺寸:</b> '+e.w+'x'+e.h+
+ '<br><b>可用:</b> '+(e.dis?'禁用':'正常')+'<br><b>影子DOM:</b> '+(e.shadow||'否')+
+ '<br><b>class:</b> <span style="color:#7c87a0">'+e.cls+'</span>'+
+ '<div style="margin-top:8px;color:#ffd479;font-size:12px">点击坐标 = CSS('+e.x+','+e.y+')，截图/OCR坐标请 x DPR(__DPR__)</div>';
+D.style.display='block';}
+function bind(){
+  var n=document.querySelectorAll('[data-i]');for(var i=0;i<n.length;i++){(function(k){n[k].addEventListener('click',function(){show(+k);});})(i);}
+  var trs=document.querySelectorAll('tbody tr[data-i]');for(var j=0;j<trs.length;j++){(function(k){trs[k].addEventListener('click',function(){show(+k);});})(j);}
+}
+bind();
+document.getElementById('q').addEventListener('input',function(){var v=this.value.toLowerCase();var trs=document.querySelectorAll('tbody tr');for(var i=0;i<trs.length;i++){var t=trs[i].textContent.toLowerCase();trs[i].style.display=t.indexOf(v)>=0?'':'none';}});
+</script>
+</div></body></html>
