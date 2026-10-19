@@ -2,8 +2,8 @@
 name: web-recon
 description: "网页/平台全方位侦察技能：扫描任意已打开的网页（拼多多/抖音/小红书/淘宝等商家后台或任何在线页面），一键生成「页面侦察地图」——识别框架（React/Vue/jQuery）、列出全部可交互元素（按钮/输入框/下拉/链接/开关/文件上传口）的位置坐标、文本、type、role、class，穿透 Shadow DOM（找小红书保存按钮那种隐藏元素），检测 navigator.webdriver 防自动化信号，输出可视化的 HTML 地图 + JSON 数据 + 页面截图。适用于：操作任何网页后台前先摸底、按钮点不到时排查元素是否藏在 Shadow DOM、需要精确 CSS 坐标做自动化点击、判断页面框架和 DPR 做坐标换算。触发词：扫描页面、扫一下这个页面、看下这个页面、识别这个网页、识别这个软件页面、了解下这个网页、了解下这个网站、去看下某某网站、页面地图、侦察、按钮找不到、元素定位、这个页面怎么操作、读懂页面、全方位了解平台。注意：只有用户想让AI了解/操作某个网页页面的内部结构时才用；如果只是普通搜索问答（问网站是什么、有没有这个产品）不用本技能。"
 platform: 任意带 CDP 调试端口的浏览器（默认 Edge/Chrome 9223）
-version: 1.0.1
-updated: 2026-10-18
+version: 1.1.0
+updated: 2026-10-19
 ---
 
 # 网页侦察器 web-recon（读懂页面 / 全方位扫描平台）
@@ -26,7 +26,9 @@ python scan_page.py                       # 默认 9223，自动挑电商后台/
 python scan_page.py --match goods_list    # 按 URL 片段匹配 tab
 python scan_page.py --list                # 先看有哪些页面可扫
 python scan_page.py --out D:\out          # 指定输出目录
+python scan_page.py --scroll 15 --aggressive   # v1.1.0: 滚动全页扫描(懒加载不遗漏)+按钮深度识别
 ```
+v1.1.0 新增：`--scroll N` 自动滚动 N 屏合并扫描（页面不滚时会自动找最大滚动容器，如抖音 _bpJj4nI）；`--aggressive` 深度按钮识别（button/role=button/onclick/带操作词的 cursor:pointer div/span/图标按钮 class，链接不算按钮）；同域 iframe 自动穿透；坐标是文档坐标（已含滚动偏移）。
 
 ## 产物（3个）
 1. **`<页面>_侦察地图.html`** —— 可视化地图：

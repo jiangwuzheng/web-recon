@@ -1,25 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-web-recon 网页侦察器（网页/平台全方位扫描）
+web-recon 网页侦察器 v1.1.0（网页/平台全方位扫描）
+新增 v1.1.0：
+  --scroll      自动滚动全页扫描（懒加载内容不遗漏），默认最多 30 屏
+  --aggressive  深度按钮识别：div/span 带 onclick / cursor:pointer / class含btn 也算按钮
+  同域 iframe 自动穿透（contentDocument 可访问时递归）
+  元素记录"文档坐标"（已加滚动偏移），全页不漏
 
 用法:
-  python scan_page.py                      # 默认连 9223, 自动挑电商后台页面
-  python scan_page.py --port 9223 --match mms.pinduoduo.com
-  python scan_page.py --match goods_list   # 按 URL 片段匹配 tab
-  python scan_page.py --list               # 只列出当前所有可连的页面
-
-产物(输出到 --out 目录, 默认当前目录):
-  1. <页面名>_侦察地图.html  —— 可视化地图: SVG 布局图(所有按钮/输入框/上传口位置) + 可搜索元素清单 + 点击元素看详情
-  2. <页面名>_recon.json    —— 结构化侦察数据(给后续自动化脚本直接用)
-  3. <页面名>_recon.png     —— 页面截图(留档)
-
-侦察内容:
-  - 框架指纹 (React/Vue/jQuery/Angular)
-  - 视口 / DPR (截图坐标换算依据: 截图像素 = CSS坐标 x DPR)
-  - navigator.webdriver 标志 (防自动化检测信号)
-  - 全部可交互元素: 按钮/输入框/下拉/链接/开关/文件上传, 含文本、placeholder、type、role、class、CSS坐标、是否disabled
-  - Shadow DOM 递归穿透 (小红书保存按钮那种藏在影子DOM里的元素, 会标注"→ xxx[shadow]")
-  - 文件上传入口 input[type=file] (SKU图/详情图注入点)
+  python scan_page.py --match goods_list --scroll --aggressive --out D:\out
+  python scan_page.py --list
+产物(输出到 --out, 默认当前目录):
+  1. <页面>_侦察地图.html —— SVG 全页布局图 + 可搜索元素清单
+  2. <页面>_recon.json   —— 结构化数据(文档坐标, 给自动化脚本用)
+  3. <页面>_recon.png    —— 页面截图
 """
 import argparse, base64, json, os, re, sys, time, urllib.parse, urllib.request, itertools
 
@@ -33,7 +27,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 class CDP:
-    """极简 CDP 客户端(自包含, 不依赖外部工作目录)。"""
     def __init__(self, ws_url):
         self.ws = websocket.create_connection(ws_url, max_receive_message_size=64*1024*1024,
                                               timeout=60, suppress_origin=True)
@@ -71,6 +64,8 @@ class CDP:
 
 RECON_JS = r"""
 (()=>{
+  if(!window.__reconState){window.__reconState={all:new Map(),sc:null,scType:'win'};}
+  const st=window.__reconState;
   const out={url:location.href,title:document.title,
     viewport:{w:window.innerWidth,h:window.innerHeight,dpr:window.devicePixelRatio||1},
     webdriver:!!navigator.webdriver,framework:[],elements:[],files:[]};
@@ -81,7 +76,12 @@ RECON_JS = r"""
     if(window.angular)out.framework.push('Angular');
   }catch(e){}
   const seen=new Set();
-  function add(el,sp,type){
+  function scrollOffset(){
+    if(st.scType==='win')return window.scrollY||0;
+    if(st.sc)return st.sc.scrollTop||0;
+    return 0;
+  }
+  function add(el,sp,type,is_btn){
     if(seen.has(el))return; seen.add(el);
     let r=null; try{r=el.getBoundingClientRect();}catch(e){return;}
     if(!r||r.width<=0||r.height<=0)return;
@@ -89,37 +89,99 @@ RECON_JS = r"""
     let s=null; try{s=getComputedStyle(el);}catch(e){}
     if(s&&(s.display==='none'||s.visibility==='hidden'))return;
     const tag=el.tagName.toLowerCase();
+    const dy=Math.round(r.y+scrollOffset());
     const o={tag:tag,text:(el.textContent||'').trim().replace(/\s+/g,' ').slice(0,80),
       ph:el.getAttribute('placeholder')||'',type:type||(el.getAttribute('type')||'').toLowerCase(),
       role:el.getAttribute('role')||'',cls:(typeof el.className==='string'?el.className:'').slice(0,120),
-      x:Math.round(r.x),y:Math.round(r.y),w:Math.round(r.width),h:Math.round(r.height),
+      x:Math.round(r.x),y:dy,w:Math.round(r.width),h:Math.round(r.height),
       dis:!!el.disabled,shadow:sp||''};
-    if(tag==='input'&&o.type==='file'){o.kind='file';out.files.push(o);}
-    else if(tag==='button'||(tag==='input'&&['button','submit','reset'].indexOf(o.type)>=0))o.kind='button';
+    if(is_btn){o.kind='button';}
+    else if(tag==='input'&&o.type==='file'){o.kind='file';out.files.push(o);}
     else if(tag==='input'||tag==='textarea'||tag==='select')o.kind='input';
     else if(tag==='a')o.kind='link';
     else o.kind='widget';
-    out.elements.push(o);
+    const k=[o.kind,o.tag,o.text,o.ph,o.cls].join('|');
+    st.all.set(k,o);  // 同特征元素: 保留最新坐标
+  }
+  const OPER_WORDS=['关注','点赞','收藏','评论','分享','转发','直播','发布','删除','编辑','保存','提交','登录','注册','搜索','确定','取消','上传','添加','设置','立即','更换','刷新','更多','展开','同意','复制','下载','播放','暂停','追更','投币','弹幕','下载APP','打开App','知道了','换一批','签到','抽奖','反馈','举报','关注中','已关注'];
+  function isBtn(el,tag,type,role,s){
+    if(tag==='a')return false;  // 链接归链接, 不标按钮
+    if(tag==='button'||(tag==='input'&&['button','submit','reset'].indexOf(type)>=0))return true;
+    if(role==='button')return true;
+    if(__AGGR__){
+      if((tag==='div'||tag==='span')){
+        if(el.getAttribute('onclick')!==null||el.getAttribute('onmousedown')!==null)return true;
+        if(role==='link'||role==='tab'||role==='menuitem'||role==='switch'||role==='checkbox'||role==='radio')return true;
+        if(s&&s.cursor==='pointer'){
+          const txt=(el.textContent||'').trim().replace(/\s+/g,' ');
+          const aria=(el.getAttribute('aria-label')||'')+ (el.getAttribute('title')||'');
+          const cn=typeof el.className==='string'?el.className:'';
+          if(txt.length<=8&&OPER_WORDS.some(w=>txt.includes(w)))return true;   // 短文本+操作词 → 真按钮
+          if(OPER_WORDS.some(w=>aria.includes(w)))return true;                 // aria/title 含操作词 → 真按钮
+          if(/icon-button|btn-icon|oper|button/i.test(cn)&&cn.length<60)return true; // 图标按钮class
+        }
+      }
+    }
+    return false;
   }
   function walk(root,sp){
     let all=[]; try{all=root.querySelectorAll('*');}catch(e){}
-    const roles=['button','switch','checkbox','radio','tab','menuitem','link','searchbox','textbox','combobox','dialog'];
     for(let i=0;i<all.length;i++){
       const el=all[i]; if(!el)continue;
       const tag=el.tagName.toLowerCase();
       const type=(el.getAttribute('type')||'').toLowerCase();
       const role=el.getAttribute('role')||'';
-      const isBtn=tag==='button'||(tag==='input'&&['button','submit','reset'].indexOf(type)>=0);
+      let s=null; try{s=getComputedStyle(el);}catch(e){}
+      if(isBtn(el,tag,type,role,s)){add(el,sp,type,true);continue;}
       const isInput=tag==='input'||tag==='textarea'||tag==='select';
-      const isLink=tag==='a'&&el.getAttribute('href')!==null;
-      const isRole=roles.indexOf(role)>=0;
+      const isRole=!!role;
       const isEdit=el.getAttribute('contenteditable')==='true';
-      if(isBtn||isInput||isLink||isRole||isEdit)add(el,sp,type);
+      if(isInput||isRole||isEdit)add(el,sp,type,false);
       if(el.shadowRoot)walk(el.shadowRoot,sp+' → '+tag+'[shadow]');
     }
   }
   walk(document,'');
+  try{
+    document.querySelectorAll('iframe').forEach(f=>{
+      try{const d=f.contentDocument; if(d)walk(d,' → iframe');}catch(e){}
+    });
+  }catch(e){}
+  out.elements=[...st.all.values()];
   return out;
+})()
+"""
+
+SCROLL_JS = r"""
+(()=>{
+  if(!window.__reconState){window.__reconState={all:new Map(),sc:null,scType:'win'};}
+  const st=window.__reconState;
+  const se=document.scrollingElement||document.documentElement;
+  if(!st.sc){
+    // 优先整页(se)能滚就用整页; 否则找最大的可滚动容器
+    if((document.documentElement.scrollHeight||0)>window.innerHeight+80){
+      st.sc=se; st.scType='win';
+    }else{
+      let best=null, bestH=0;
+      try{
+        const all=document.querySelectorAll('*');
+        for(const e of all){
+          if(e.scrollHeight>e.clientHeight+80){
+            const s=getComputedStyle(e);
+            if(s&&/auto|scroll/.test(s.overflowY)&&e.scrollHeight>bestH){best=e;bestH=e.scrollHeight;}
+          }
+        }
+      }catch(e){}
+      st.sc=best||se; st.scType=best?'el':'win';
+    }
+  }
+  const sc=st.sc;
+  let cur,max;
+  if(st.scType==='win'){cur=window.scrollY||0; max=(document.documentElement.scrollHeight||0)-window.innerHeight;}
+  else{cur=sc.scrollTop||0; max=sc.scrollHeight-sc.clientHeight;}
+  if(max<5)return {end:true,cur:0,max:0};
+  if(cur>=max-5)return {end:true,cur:cur,max:max};
+  if(st.scType==='win')window.scrollBy(0,600); else sc.scrollTop=cur+600;
+  return {end:false,cur:(st.scType==='win'?(window.scrollY||0):(sc.scrollTop||0)),max:max};
 })()
 """
 
@@ -162,9 +224,10 @@ def build_html(recon, name):
     vp = recon["viewport"]
     kinds = {"button": ("#4d9fff", "按钮"), "input": ("#37c46f", "输入框"), "link": ("#ffd479", "链接"),
              "file": ("#c86bff", "上传口"), "widget": ("#ff8f6b", "控件")}
-    svg_els = [e for e in els if e["y"] < vp["h"] and e["y"] + e["h"] > 0]
+    maxy = max([e["y"] + e["h"] for e in els] or [vp["h"]])
+    svg_els = els
     svg_w = max(vp["w"], 800)
-    svg_h = min(vp["h"], 1600)
+    svg_h = min(max(maxy, vp["h"]), 4000)
     rects = []
     for i, e in enumerate(svg_els):
         col = kinds.get(e["kind"], ("#999", "?"))[0]
@@ -222,12 +285,15 @@ def build_html(recon, name):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="网页侦察器: 扫描一个页面生成可视化地图")
+    ap = argparse.ArgumentParser(description="网页侦察器 v1.1.0: 扫描页面生成可视化地图(支持滚动全扫/按钮深度识别)")
     ap.add_argument("--port", type=int, default=9223, help="CDP 端口(默认9223)")
     ap.add_argument("--match", default="", help="按 URL 片段匹配 tab(默认自动优先电商后台)")
     ap.add_argument("--out", default=".", help="输出目录(默认当前目录)")
     ap.add_argument("--list", action="store_true", help="只列出可连接的页面")
     ap.add_argument("--full", action="store_true", help="截图用整页模式")
+    ap.add_argument("--scroll", type=int, nargs="?", const=30, default=0,
+                    help="自动滚动全页扫描(懒加载不遗漏), 默认最多30屏; 传数字自定义屏数, 如 --scroll 10")
+    ap.add_argument("--aggressive", action="store_true", help="按钮深度识别(div/span带onclick/cursor:pointer/class含btn)")
     a = ap.parse_args()
 
     pages = get_pages(a.port)
@@ -241,8 +307,23 @@ def main():
     print("目标页面:", t.get("url", "")[:130])
     c = CDP(t["webSocketDebuggerUrl"])
     try:
-        recon = c.eval(RECON_JS)
-        if not isinstance(recon, dict):
+        # 初始化: 清掉残留状态
+        c.eval("window.__reconState=null;true")
+        recon_js = RECON_JS.replace("__AGGR__", "true" if a.aggressive else "false")
+        if a.scroll:
+            recon = None
+            for step in range(a.scroll):
+                recon = c.eval(recon_js)   # 先收集当前屏(返回累积全量)
+                st = c.eval(SCROLL_JS)
+                if not isinstance(st, dict):
+                    break
+                if st.get("end"):
+                    break
+                time.sleep(0.6)
+            recon = c.eval(recon_js)       # 最后再收一次
+        else:
+            recon = c.eval(recon_js)
+        if not isinstance(recon, dict) or "elements" not in recon:
             print("侦察返回异常:", str(recon)[:200]); return
         base = re.sub(r'[\\/:*?"<>|]', "_", (recon.get("title") or "page"))[:40] or "page"
         os.makedirs(a.out, exist_ok=True)
